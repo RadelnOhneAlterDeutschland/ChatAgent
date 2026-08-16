@@ -1,0 +1,43 @@
+name: chatagent
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chatagent
+      POSTGRES_PASSWORD: chatagent
+      POSTGRES_DB: chatagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatagent -d chatagent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://chatagent:chatagent@postgres:5432/chatagent
+      ENVIRONMENT: local
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/srv/app
+      - ./backend/tests:/srv/tests
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+# Pinecone is managed SaaS — no local vector DB container (plan.md Phase 0).
+volumes:
+  pgdata:
