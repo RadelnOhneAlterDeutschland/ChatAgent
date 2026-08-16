@@ -28,26 +28,102 @@ Pick the guide for your OS:
 
 ## Setup on Windows 11
 
+Written for someone who has never installed developer tools before. It's longer than the
+macOS/Linux guide because it explains every click — you don't need any prior coding
+experience to follow it.
+
 The folder-sync ingestion model (Phase 2b) was written with this host in mind: OneDrive's
 Windows desktop client syncs cloud files into a real local folder, which is exactly what
-`INGESTION_FOLDER_PATHS` points at.
+this app watches for new PDFs.
 
-Two ways to run it; pick one and stay in it (don't mix — a venv or `node_modules` built on
-one side won't run on the other).
+Don't be put off by how long this page looks — it's long because every click is spelled
+out, not because any of it is hard. Go one step at a time, top to bottom, and you'll get
+there.
 
-### Option A — native Windows (PowerShell) — recommended if you use OneDrive-for-Windows
+### What is "PowerShell" and how do I open it?
 
-**Install prerequisites first:**
+PowerShell is the built-in Windows program where you type text commands instead of
+clicking things — that's how the rest of this guide talks to your computer. You don't
+install it; it's already on Windows 11.
 
-| Tool | Get it | Install notes |
-|---|---|---|
-| Docker Desktop | [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/) | Run the installer, keep **"Use WSL 2 instead of Hyper-V"** checked. Reboot if asked. Adds `docker` to PATH itself. |
-| Python 3.12+ | [python.org/downloads/windows](https://www.python.org/downloads/windows/) | On the first installer screen, tick **"Add python.exe to PATH"** before clicking Install — easy to miss, and without it `python`/`pip` won't resolve in a new terminal. |
-| Node.js 20+ LTS | [nodejs.org](https://nodejs.org/) | Download the **LTS** installer — it adds `node`/`npm` to PATH automatically. |
-| Git | [git-scm.com/download/win](https://git-scm.com/download/win) | Default options are fine; adds `git` to PATH automatically. |
+To open it: click the **Start** button (Windows logo, bottom-left of the screen), type
+`PowerShell`, then click **Windows PowerShell** in the results. A blue-ish (or black)
+window opens with a blinking cursor — that's it, that's the whole program. Every block
+below that starts with `powershell` is something you type into that window, one line at a
+time, pressing **Enter** after each line to run it.
 
-Open a **new** PowerShell window after installing (PATH changes don't apply to already-open
-terminals) and verify:
+Keep this window open as you work through the guide — you'll come back to it repeatedly.
+If you ever close it, just reopen it the same way (Start → type `PowerShell` → Enter) and
+`cd` back into the project folder (see Step 5) before continuing.
+
+### Where do your PDF documents go?
+
+Quick preview before you start, since this is usually the first question: this app has no
+"upload" button anywhere. Instead, you point it at one folder on your computer — most
+people use their OneDrive folder — and it watches that folder. Any PDF you drop in there
+becomes searchable in the chat once you run one command telling it to look. You'll choose
+that exact folder in Step 7 (a setting called `INGESTION_FOLDER_PATHS`) and actually use it
+in Step 10. Nothing to do with it yet — just keep the idea in mind as you go.
+
+### Step 1 — Install Docker Desktop
+
+Docker is the program that runs the app's backend and database for you, already packaged
+up — you won't need to install Postgres or configure anything yourself.
+
+1. Go to [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
+   in your browser and click **Download for Windows**.
+2. Open the downloaded file and click through the installer with the default options. When
+   it asks about **"Use WSL 2 instead of Hyper-V"**, leave that checked.
+3. It will likely ask you to **restart your computer** — do that now.
+4. After restarting, open **Docker Desktop** from the Start menu (search for it, same as
+   PowerShell above) and leave it running. Wait until the whale icon in the bottom-right
+   system tray stops animating and Docker Desktop's window says it's running — this can
+   take a minute. **Docker Desktop needs to stay open in the background** every time you
+   use this app; if it's closed, the commands below will fail.
+
+**If something goes wrong:**
+- *"WSL 2 installation is incomplete"* — Docker will show a link to a Microsoft page with a
+  small extra installer ("WSL2 Linux kernel update package"); download and run that, then
+  reopen Docker Desktop.
+- *Install says virtualization is disabled* — this is a setting in your PC's BIOS/UEFI
+  (outside Windows), and the exact steps differ per PC manufacturer. Search
+  `"enable virtualization" <your PC brand> BIOS` and follow that guide, then restart.
+- *Docker Desktop window never finishes starting* — restart your computer once, reopen
+  Docker Desktop, and give it a couple of minutes.
+
+### Step 2 — Install Python
+
+1. Go to [python.org/downloads/windows](https://www.python.org/downloads/windows/) and
+   click the yellow **Download Python 3.1x.x** button (anything 3.12 or newer).
+2. Run the installer. **On the very first screen**, before clicking anything else, tick the
+   checkbox at the bottom that says **"Add python.exe to PATH"**. This step is the one
+   people miss most often — if you skip it, Windows won't know where to find `python` later.
+3. Click **Install Now** and let it finish.
+
+**If something goes wrong:**
+- Later on, if PowerShell says `'python' is not recognized as the name of a cmdlet...`,
+  you likely missed the checkbox in step 2. Easiest fix: run the installer again, choose
+  **Uninstall**, then reinstall and tick the box this time. (Manual fix, if you'd rather not
+  reinstall: see "Fixing PATH manually" at the end of this section.)
+
+### Step 3 — Install Node.js
+
+1. Go to [nodejs.org](https://nodejs.org/) and click the button offering the **LTS**
+   version (the "recommended for most users" one, not "Current").
+2. Run the installer and click **Next** through every screen, keeping all the defaults.
+   This one adds itself to PATH automatically — no checkbox to remember.
+
+### Step 4 — Install Git
+
+1. Go to [git-scm.com/download/win](https://git-scm.com/download/win) — the download
+   should start automatically, or click the 64-bit installer link.
+2. Run the installer and click **Next** through every screen, keeping all the defaults.
+
+### Step 5 — Check everything installed correctly
+
+Close any PowerShell window you had open and open a **new** one (Start → type
+`PowerShell` → Enter) — this matters, because a window opened before installing won't see
+the updates. Type each of these lines and press Enter after each one:
 
 ```powershell
 docker --version
@@ -56,78 +132,173 @@ node --version
 git --version
 ```
 
-If any command isn't found after installing, PATH wasn't updated — fix it manually: Start
-→ search "Environment Variables" → **Edit the system environment variables** → **Environment
-Variables…** → under **User variables**, select `Path` → **Edit** → **New** → add the
-tool's install folder (Python: e.g. `C:\Users\you\AppData\Local\Programs\Python\Python312\`
-and its `Scripts\` subfolder) → OK everywhere → open a new terminal.
+Each should print a version number (e.g. `Python 3.12.4`), not an error. If one prints
+something like `'docker' is not recognized as the name of a cmdlet, function...`, that
+tool's install didn't finish or didn't reach PATH — see "Fixing PATH manually" below, or
+just reinstall that one tool and make sure to restart PowerShell afterward.
 
-**Now set up the project:**
+**Fixing PATH manually** (only needed if a command above still isn't found after
+reinstalling): click Start → type `Environment Variables` → open **"Edit the system
+environment variables"** → click the **"Environment Variables…"** button → in the top box
+labeled **User variables**, click `Path` → **Edit** → **New** → paste in the missing tool's
+install folder (for Python, something like
+`C:\Users\<you>\AppData\Local\Programs\Python\Python312\` — and, as a second `New` entry,
+that same folder's `Scripts\` subfolder) → click **OK** on every open window → close and
+reopen PowerShell.
+
+That's the installing done — genuinely the most tedious part. Everything from here is
+mostly copying commands and pasting them in.
+
+### Step 6 — Get the project onto your computer
+
+If you already have the project as a folder (e.g. someone sent it to you as a zip), skip
+to Step 7 — just make sure you extract the zip first (right-click it → **Extract All**),
+don't run it straight from inside the zip.
+
+Otherwise, download it with Git. In PowerShell:
 
 ```powershell
+cd Documents
 git clone <this-repo-url>
 cd ChatAgent
+```
+
+(`cd` means "go into this folder". The first line moves into your Documents folder, the
+second line downloads the project into a new `ChatAgent` folder there, the third line
+moves into it. Everything from here on assumes you're inside that `ChatAgent` folder — if
+you ever get an error about a file "not found", check you're still in it.)
+
+### Step 7 — Configure the backend
+
+```powershell
 copy backend\.env.example backend\.env
 notepad backend\.env
 ```
 
-Fill in `backend\.env` — same variables as the macOS/Linux table below. For
-`INGESTION_FOLDER_PATHS`, use a real Windows path to your OneDrive sync folder, e.g.
-`C:\Users\you\OneDrive\ChatAgent-Inbox` (multiple folders: comma-separate them — Windows
-paths don't contain commas, so this is safe).
+This copies a template settings file and opens it in Notepad. It's a plain text file —
+each line is `SOME_NAME=value`. Fill in the values in this table (the file already has
+placeholder lines for each of these; replace the placeholder text after the `=`, leave the
+name before the `=` alone):
+
+| Line to fill in | What to put there |
+|---|---|
+| `JWT_SECRET=` | Any long random text. To generate one: open a **second** PowerShell window (Start → PowerShell → Enter) and run `python -c "import secrets; print(secrets.token_urlsafe(48))"` — copy the printed text in. |
+| `OPENAI_API_KEY=` | Your API key from [platform.openai.com](https://platform.openai.com/api-keys) (used for chat + embeddings). |
+| `PINECONE_API_KEY=` | Your API key from your Pinecone account. |
+| `PINECONE_INDEX_NAME=` | The name of a Pinecone index you've already created (dimension `1536`, metric `cosine`). |
+| `S3_BUCKET_NAME=` | Name of an S3 bucket you've created in AWS. |
+| `AWS_REGION=` | The AWS region your bucket is in, e.g. `eu-west-1`. |
+| `INGESTION_FOLDER_PATHS=` | The folder this app watches for new PDFs — see below. |
+| `DATABASE_URL=` | Leave this one exactly as it already is — Docker fills in the real value itself. |
+
+**This `INGESTION_FOLDER_PATHS` line is where you tell the app which folder your documents
+live in** — it's the answer to "where do I put my PDFs?" from earlier. Use your OneDrive
+folder's real path, e.g. `C:\Users\you\OneDrive\ChatAgent-Inbox` (it doesn't have to be
+inside OneDrive — any folder works — but OneDrive is the common case this was built for).
+Pick a folder now, or create a new empty one for this purpose (right-click inside File
+Explorer → **New → Folder**) if you don't already have one in mind.
+
+To get the exact path without typing it by hand and risking a typo: open File Explorer,
+navigate to that folder, right-click it, choose **Copy as path**, then paste into Notepad
+and delete the quote marks (`"`) it adds at each end. (Multiple folders: separate them with
+a comma — Windows paths don't contain commas, so that's always safe.)
+
+Also needed but *not* in this file: AWS credentials for S3/Textract access, which come from
+a separate file at `%USERPROFILE%\.aws\credentials` (created by running `aws configure` if
+you've installed the [AWS CLI](https://aws.amazon.com/cli/), or by hand — ask whoever set
+up your AWS account if you're not sure).
+
+When done editing, press **Ctrl+S** to save, then close Notepad.
+
+### Step 8 — Start the backend
+
+Back in your first PowerShell window (make sure you're still in the `ChatAgent` folder —
+run `cd` commands again if unsure), run:
 
 ```powershell
 docker compose up --build
 ```
 
-Docker Desktop handles the Windows-path-to-container translation. Confirm with
-`http://localhost:8000/docs`.
+The first run downloads a few things and can take several minutes — that's normal, let it
+run. You'll see a scroll of log text; leave this window open and running (this is now your
+"server" — closing the window stops the app). It's ready once the scrolling slows down and
+you see lines mentioning `Uvicorn running` or `Application startup complete`.
 
-Frontend:
+Check it worked: open your web browser and go to `http://localhost:8000/docs` — you should
+see an interactive API page, not an error.
+
+**If something goes wrong:**
+- *"Cannot connect to the Docker daemon"* — Docker Desktop isn't running; open it from the
+  Start menu and wait for it to fully start, then try the command again.
+- *"port is already allocated"* (mentions `5432` or `8000`) — something else on your
+  computer is already using that port. Close other apps that might use a database or web
+  server, or restart your computer, then try again.
+- *Complains about a missing `.env` file* — Step 7 wasn't completed; re-run the `copy`
+  command from that step.
+
+### Step 9 — Start the frontend (the web page itself)
+
+Open a **new, second** PowerShell window (leave the first one running Docker) and:
 
 ```powershell
-cd frontend
+cd Documents\ChatAgent\frontend
 copy .env.example .env.local
 npm install
 npm run dev
 ```
 
-Ingest a PDF — run the CLI **inside the container** (simplest; skips needing a native
-Windows venv):
+`npm install` downloads the frontend's dependencies — first time only, can take a couple of
+minutes. `npm run dev` then starts the web page and keeps running (same as Docker, leave
+this window open). Once it prints something like `Local: http://localhost:3000`, open that
+address in your browser.
+
+**If something goes wrong:**
+- *`'npm' is not recognized...`* — close this PowerShell window, reopen a fresh one, and
+  try again (PATH from Node's install may not have reached this window yet).
+- *`npm install` fails with permission or network errors* — check your internet connection;
+  if it persists, close and reopen PowerShell and retry once.
+
+### Step 10 — Add a PDF and try it out
+
+Here's where the folder from Step 7 comes back in. Open File Explorer, go to the exact
+folder you put in `INGESTION_FOLDER_PATHS`, and drag-and-drop (or copy/paste) a PDF file
+into it — that's the only "upload" step this app has. Any PDF placed in that one folder is
+what becomes searchable in the chat.
+
+Then, back in PowerShell (your first window, or open a third one — still needs to be
+inside the `ChatAgent\backend` folder), run:
 
 ```powershell
 docker compose exec backend python -m app.ingestion.cli
 ```
 
-If you'd rather run the backend natively instead of in Docker, the venv activation script
-differs from macOS/Linux:
+This is the command that tells the app "go look in that folder for anything new." You'll
+see log lines confirming what it found. It doesn't run by itself in local dev — re-run this
+one command every time you add another PDF to the folder.
 
-```powershell
-cd backend
-python -m venv .venv
-.venv\Scripts\pip install ".[dev]"
-.venv\Scripts\alembic upgrade head
-.venv\Scripts\uvicorn app.main:app --reload
-.venv\Scripts\python -m app.ingestion.cli
-```
+Now in your browser:
 
-AWS credentials (for boto3's default chain, used by S3 + Textract) live at
-`%USERPROFILE%\.aws\credentials` — same format as macOS/Linux, just a different path.
+1. Go to `http://localhost:3000` → sign up for an account → log in.
+2. Ask a question about the PDF you added.
+3. The answer should include a small `[filename p.N]` badge — click it to open that PDF at
+   the exact page it came from.
 
-### Option B — WSL2 (Ubuntu)
+If you got this far and see a real answer with a citation, the whole thing is working end
+to end — nicely done.
 
-If you'd rather work in a Linux shell: install WSL2 with `wsl --install` (PowerShell, as
-Administrator; reboot when it asks), which defaults to an Ubuntu distro. In Docker Desktop,
-go to **Settings → Resources → WSL Integration** and enable it for that distro. Then open
-the Ubuntu terminal and follow the **[macOS / Linux](#setup-on-macos--linux)** instructions
-below verbatim — Docker Desktop's WSL2 integration exposes the same `docker`/
-`docker compose` commands there.
+### Advanced alternative: WSL2 (Ubuntu) instead of native Windows
 
-One caveat: your OneDrive sync folder lives on the Windows filesystem, reachable from WSL
-at `/mnt/c/Users/you/OneDrive/ChatAgent-Inbox` — use that path (not a `C:\` one) for
-`INGESTION_FOLDER_PATHS` in this option, and expect cross-filesystem I/O (`/mnt/c/...`) to
-be noticeably slower than a native WSL path. If that matters, drop PDFs into a plain WSL
-directory instead and give up on syncing straight from OneDrive.
+Skip this unless you already know what Linux/WSL is and specifically want it. Install WSL2
+with `wsl --install` in PowerShell (run as Administrator — right-click PowerShell in the
+Start menu, choose **Run as administrator**), reboot when asked. In Docker Desktop, go to
+**Settings → Resources → WSL Integration** and enable it for the Ubuntu distro that
+installs. Then open the Ubuntu terminal and follow the
+**[macOS / Linux](#setup-on-macos--linux)** guide below verbatim.
+
+Your OneDrive folder is reachable from WSL at
+`/mnt/c/Users/you/OneDrive/ChatAgent-Inbox` (use that instead of a `C:\` path for
+`INGESTION_FOLDER_PATHS` in this mode) — expect it to run slower than a plain WSL folder,
+since it's crossing between Windows and Linux filesystems on every read.
 
 ---
 
