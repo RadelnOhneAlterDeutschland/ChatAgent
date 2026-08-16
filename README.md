@@ -14,7 +14,7 @@ see `plan.md` for what's left.
 
 ---
 
-## Local setup guide
+## Local setup guide (macOS / Linux)
 
 Two moving parts: the **backend** (FastAPI + Postgres, run via Docker Compose) and the
 **frontend** (Next.js, run with `npm` on your host — not containerized). PDFs are ingested
@@ -112,6 +112,83 @@ every signed-in user — there's no per-user document isolation for PDFs.
 - No refresh token: JWT expires after 30 minutes, re-login after.
 - Textract OCR only fires on pages with near-zero extractable text; needs Textract IAM
   permission on the same AWS credentials as the S3 access.
+
+---
+
+## Setup on Windows 11
+
+Yes — nothing here is Linux-only, and the folder-sync ingestion model (Phase 2b) was
+written with exactly this host in mind: OneDrive's Windows desktop client syncs cloud
+files into a real local folder, which is what `INGESTION_FOLDER_PATHS` points at.
+
+Two ways to run it; pick one and stay in it (don't mix — a venv or `node_modules` built on
+one side won't run on the other).
+
+### Option A — native Windows (PowerShell) — recommended if you use OneDrive-for-Windows
+
+Prereqs: [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the WSL2
+backend enabled, [Python 3.12+](https://www.python.org/downloads/windows/) ("Add python.exe
+to PATH" during install), [Node.js 20+ LTS](https://nodejs.org/), Git.
+
+```powershell
+# Backend
+copy backend\.env.example backend\.env
+notepad backend\.env       # fill in the same keys as the macOS/Linux table above
+```
+
+For `INGESTION_FOLDER_PATHS`, use a real Windows path to your OneDrive sync folder, e.g.
+`C:\Users\you\OneDrive\ChatAgent-Inbox` (multiple folders: comma-separate them — Windows
+paths don't contain commas, so this is safe).
+
+```powershell
+docker compose up --build
+```
+
+Same as macOS/Linux from here — Docker Desktop handles the Windows-path-to-container
+translation. Confirm with `http://localhost:8000/docs`.
+
+Frontend:
+
+```powershell
+cd frontend
+copy .env.example .env.local
+npm install
+npm run dev
+```
+
+Ingest a PDF — run the CLI **inside the container** (simplest; skips needing a native
+Windows venv):
+
+```powershell
+docker compose exec backend python -m app.ingestion.cli
+```
+
+If you'd rather run the backend natively instead of in Docker, the venv activation script
+differs from macOS/Linux:
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\pip install ".[dev]"
+.venv\Scripts\alembic upgrade head
+.venv\Scripts\uvicorn app.main:app --reload
+.venv\Scripts\python -m app.ingestion.cli
+```
+
+AWS credentials (for boto3's default chain, used by S3 + Textract) live at
+`%USERPROFILE%\.aws\credentials` — same format as macOS/Linux, just a different path.
+
+### Option B — WSL2 (Ubuntu)
+
+If you'd rather work in a Linux shell, install WSL2 (`wsl --install`) and follow the
+**macOS / Linux** instructions above verbatim inside the WSL Ubuntu shell — Docker Desktop's
+WSL2 integration exposes the same `docker`/`docker compose` commands there.
+
+One caveat: your OneDrive sync folder lives on the Windows filesystem, reachable from WSL
+at `/mnt/c/Users/you/OneDrive/ChatAgent-Inbox` — use that path (not a `C:\` one) for
+`INGESTION_FOLDER_PATHS` in this option, and expect cross-filesystem I/O (`/mnt/c/...`) to
+be noticeably slower than a native WSL path. If that matters, drop PDFs into a plain WSL
+directory instead and give up on syncing straight from OneDrive.
 
 ---
 
