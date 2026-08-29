@@ -28,6 +28,34 @@ def _document_in_shared_library(
     run_folder_sync(db_engine, ingestion_fakes, tmp_path)
 
 
+@given(parsers.parse('"{filename}" containing "{text}" is in the shared library under "{topic}"'))
+def _document_in_shared_library_under_topic(
+    db_engine,
+    ingestion_fakes: dict,
+    tmp_path: Path,
+    monkeypatch,
+    request,
+    filename: str,
+    text: str,
+    topic: str,
+) -> None:
+    """Also points `INGESTION_FOLDER_PATHS` at `tmp_path` so `pdf_search` (which reads
+    that setting directly, plan.md Phase 8) derives the same topic path the folder-sync
+    job just filed the document under — in production both already agree, since they
+    read the same setting. The settings cache is cleared once more on teardown so a
+    later test never sees this scenario's tmp_path leak through."""
+    from app.core.config import get_settings
+
+    topic_dir = tmp_path / topic
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    (topic_dir / filename).write_bytes(build_single_page_pdf(text))
+    run_folder_sync(db_engine, ingestion_fakes, tmp_path)
+
+    monkeypatch.setenv("INGESTION_FOLDER_PATHS", str(tmp_path))
+    get_settings.cache_clear()
+    request.addfinalizer(get_settings.cache_clear)
+
+
 @given(parsers.parse('the assistant will look up "{query}" and reply "{text}"'))
 def _assistant_looks_up(agent_fakes: dict, query: str, text: str) -> None:
     agent_fakes["llm_provider"].turns.extend(
@@ -106,6 +134,22 @@ def _receives_answer(context: dict, text: str) -> None:
 def _answer_cites(context: dict, page: int, filename: str) -> None:
     citations = context["response"].json()["citations"]
     assert any(c["filename"] == filename and c["page"] == page for c in citations), citations
+
+
+@then(parsers.parse('the citation for "{filename}" gives its topic as "{topic}"'))
+def _citation_topic(context: dict, filename: str, topic: str) -> None:
+    citations = context["response"].json()["citations"]
+    matching = [c for c in citations if c["filename"] == filename]
+    assert matching, citations
+    assert matching[0]["topic_path"] == topic, matching
+
+
+@then(parsers.parse('the citation for "{filename}" includes an upload date'))
+def _citation_has_upload_date(context: dict, filename: str) -> None:
+    citations = context["response"].json()["citations"]
+    matching = [c for c in citations if c["filename"] == filename]
+    assert matching, citations
+    assert matching[0]["uploaded_at"], matching
 
 
 @then("the answer has no citations")

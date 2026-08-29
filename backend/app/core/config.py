@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Phase 2b: folder-sync cron ingestion, replacing per-user web upload.
     # Comma-separated absolute paths — e.g. a OneDrive-desktop-synced local folder.
     ingestion_folder_paths: str = Field(default="", alias="INGESTION_FOLDER_PATHS")
+    # Phase 8: resolves Phase 2b's open "cron scheduling mechanism" decision — the backend
+    # polls its own watched folders on a timer instead of relying on an OS-level cron/Task
+    # Scheduler entry. `app/ingestion/cli.py` still works for a manual/external trigger.
+    ingestion_poll_minutes: int = Field(default=10, alias="INGESTION_POLL_MINUTES")
     # Not a real login — the single owner every folder-ingested document (and therefore
     # every user's pdf_search) is scoped to. Get-or-created by
     # app/ingestion/system_owner.py::ensure_system_user.

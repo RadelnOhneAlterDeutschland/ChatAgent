@@ -13,6 +13,13 @@ Feature: Chatting with the agent about my documents
     Then she receives the answer "Quarterly revenue was $4.2 million [revenue.pdf p.1]."
     And the answer cites page 1 of "revenue.pdf"
 
+  Scenario: A cited answer names the document's topic folder and upload date
+    Given "grant.pdf" containing "The grant covers rickshaw insurance" is in the shared library under "05 Finanzierung"
+    And the assistant will look up "grant" and reply "The grant covers rickshaw insurance [grant.pdf p.1]."
+    When she asks "What does the grant cover?"
+    Then the citation for "grant.pdf" gives its topic as "05 Finanzierung"
+    And the citation for "grant.pdf" includes an upload date
+
   Scenario: A question needing no document lookup still gets answered
     Given the assistant will reply directly "I'm doing well, thank you!"
     When she asks "How are you?"

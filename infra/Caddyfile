@@ -1,0 +1,24 @@
+# Reverse proxy + TLS termination for the Phase 6 single-EC2 deploy. One site block, one
+# origin: everything the browser talks to is the same host/port, so the frontend and
+# backend are same-origin and the backend's CORS config never has to change for prod.
+#
+# {$PUBLIC_SITE_ADDRESS} is read from secrets.env (see docker-compose.prod.yml's
+# `caddy.env_file`) — swapping from the nip.io stopgap to a real domain later is a single
+# value change here, not a rebuild of anything else. Examples:
+#   PUBLIC_SITE_ADDRESS=https://203-0-113-10.nip.io   # real Let's Encrypt cert, auto-renewed
+#   PUBLIC_SITE_ADDRESS=https://chat.example.org       # once a real domain is pointed here
+#   PUBLIC_SITE_ADDRESS=:80                            # plain HTTP, no TLS — beta-only,
+#                                                       # only if access is already
+#                                                       # restricted to known IPs/VPN
+
+{$PUBLIC_SITE_ADDRESS} {
+	# handle_path strips the /api prefix before proxying — the backend never sees it,
+	# so its own route table (/auth/*, /documents/*, /chat/*, ...) is unchanged.
+	handle_path /api/* {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

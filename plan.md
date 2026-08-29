@@ -229,15 +229,58 @@ Not part of MVP — SQL schema not yet defined. Revisit once a schema/source DB 
 
 ---
 
-## Phase 6 — AWS deployment
+## Phase 6 — AWS deployment — **IN PROGRESS, v1 revised down from the original ECS plan**
 
-- Terraform/CDK: VPC, ECS Fargate service, ALB, RDS Postgres, S3 bucket, IAM roles, Secrets Manager entries.
-- Fargate task sizing: start small (~0.5 vCPU / 1GB per task, roughly `t3.medium`-equivalent handles ~50-150 concurrent chat sessions since the backend is I/O-bound, not CPU-bound). Autoscale task count on request/CPU rather than fixing one large instance — cheaper at idle, scales up under load.
-- GitHub Actions: build → push ECR → deploy ECS on merge to main.
-- Pinecone: prod index provisioned, API key in Secrets Manager.
-- Observability: structured logging, basic CloudWatch alarms (5xx rate, latency).
+**Original plan (below, superseded for v1):** Terraform/CDK provisioning VPC, ECS
+Fargate, ALB, RDS Postgres, S3, IAM roles, Secrets Manager; GitHub Actions build → push
+ECR → deploy ECS. Written before Phase 2b/8 reframed this as one organization's internal
+document library at a scale plan.md itself estimated at ~50-150 concurrent sessions — not
+a public multi-tenant SaaS. Revisited at implementation time in favor of the simpler v1
+below; the ECS/ALB/RDS version is still the right answer if this ever needs to scale past
+one box (a second environment, autoscaling, uptime SLAs) — see "v2" below.
 
-**Exit criteria:** app reachable via ALB URL in AWS, same user journey as Phase 5 works against prod infra.
+**v1, as being built — single EC2 instance, no Terraform:**
+- **Compute:** one EC2 instance (`t3.medium`, `eu-central-1`/Frankfurt — physically in
+  Germany, lower latency to the user base than `eu-west-1`/Ireland) running
+  `docker-compose.prod.yml`: Postgres, backend (`base` Dockerfile target), frontend (new
+  `frontend/Dockerfile`, `output: "standalone"`, Node `next start` — the frontend was
+  host-`npm run dev`-only through Phase 5, this is its first containerized form), and
+  Caddy (reverse proxy + automatic Let's Encrypt TLS). **RESOLVED: `t3.medium` over
+  `t3.small`** — the two share identical CPU (2 vCPU, 20% baseline, 24 credits/hr; `t3`'s
+  CPU allowance doesn't change until `t3.large`), so the only real tradeoff is RAM (2GB
+  vs 4GB) for a small cost step-up, and this box runs four services sharing memory, not
+  just the backend the original Fargate-task estimate sized for.
+- **Single origin, not CORS:** Caddy path-routes `/api/*` → backend, everything else →
+  frontend, on the same host — so the browser only ever makes same-origin requests and
+  `main.py`'s CORS middleware needed no prod-specific change.
+- **Postgres:** containerized on the same box, **no backup job in v1** (accepted
+  tradeoff — an instance/volume loss loses all data). **v2: migrate to managed RDS**
+  (automated backups/patching/failover) — tracked as open, see the decision table.
+- **IAM:** an EC2 instance role/profile scoped to just the S3 bucket + Textract, not
+  static `AWS_ACCESS_KEY_ID`/`SECRET` in `secrets.env` — no long-lived key on the box.
+- **TLS/domain:** no domain purchased yet — `nip.io` (free, real Let's Encrypt cert
+  against the Elastic IP) is the beta stopgap; swapping to a real domain later is one
+  `PUBLIC_SITE_ADDRESS` value change, nothing else. Elastic IP costs $0.005/hr regardless
+  (AWS's Feb-2024 pricing change made this the same whether it's a default public IP or
+  an Elastic IP, attached or idle) — it's not an extra cost over having a public IP at
+  all, just the one that doesn't change under you.
+- **Deploy:** GitHub Actions (`deploy` job in `.github/workflows/ci.yml`, after
+  `lint-and-test`/`build-image` pass on `main`) SSHes into the box and runs `git pull &&
+  docker compose -f docker-compose.prod.yml up -d --build` directly on it — no image
+  registry (ECR/GHCR) yet, since there's only the one box to roll out to.
+- **IaC:** none written for v1 (`infra/terraform/` stays empty) — hand-provisioned once
+  via the console, documented step by step in `infra/aws-runbook.md`. Revisit Terraform
+  once there's a second environment or instance to keep in sync with the first.
+- **Not built yet (v1 gap, tracked):** `rclone`↔OneDrive-for-Business bidirectional sync
+  feeding `INGESTION_FOLDER_PATHS` on the box — blocked on the org's Microsoft 365 tenant
+  OAuth consent, not an engineering blocker for the rest of Phase 6. See
+  `infra/aws-runbook.md`'s "Not covered yet".
+- **Observability:** not yet added (structured logging/alarms) — CloudWatch's original
+  role in the ECS plan doesn't map cleanly onto one plain EC2 instance; revisit alongside
+  whatever monitoring approach fits v1 or the v2 RDS/ECS migration.
+
+**Exit criteria:** app reachable over HTTPS via the Elastic IP (`nip.io` address), same
+user journey as Phase 5 works against this instance.
 
 ---
 
@@ -250,6 +293,80 @@ Not part of MVP — SQL schema not yet defined. Revisit once a schema/source DB 
 - Cost monitoring: OpenAI usage + Pinecone + RDS.
 
 **Exit criteria:** agreed non-functional targets (latency, cost/query, concurrency) met.
+
+---
+
+## Phase 8 — Smart intake, citation provenance, automatic ingestion — **DONE**
+
+Requested after Phase 5 shipped. Extends Phase 2b (ingestion), Phase 4 (citations), and
+Phase 5 (frontend) rather than replacing any of them — the folder-sync cron keeps working
+unchanged for the existing corpus.
+
+**As built:** no migration needed — `documents.source_path`/`uploaded_at` already existed
+(Phase 2b), so citation provenance is derived at read time
+(`app/ingestion/topic_path.py::topic_path_for`) rather than stored redundantly.
+`app/ingestion/scheduler.py` (`poll_forever` + `IngestionScheduler`) runs the same
+`sync_folder` the CLI uses, on a background thread started from `app/main.py`'s lifespan;
+inert by default (`INGESTION_FOLDER_PATHS` unset, as in every test run). Smart intake is
+`app/ingestion/{topic_tree,intake,intake_classifier}.py` plus two new endpoints,
+`POST /documents/intake/suggest` and `POST /documents/intake/confirm` — the pending upload
+sits in an in-memory `IntakeStagingStore` between the two calls (**known simplification**:
+lost on restart, same tracked-gap pattern as Phase 2b's deletion sync). Frontend:
+`IntakeUpload.tsx` (file picker → suggestion → editable topic/subfolder picker → confirm)
+and `CitationBadge.tsx` now render `[filename p.N, topic_path, uploaded YYYY-MM-DD]` when
+those fields are present. 225 backend tests (`tests/features/intake.feature`,
+`tests/unit/test_{scheduler,topic_path,topic_tree,intake,intake_classifier}.py`, updated
+`chat.feature`/`test_pdf_search_tool.py`), all green; frontend unverified by `tsc`/build in
+this pass — no Node runtime available in the environment that built it, verify locally per
+the README before relying on it.
+
+**Context that reframes the original ask:** the corpus isn't a mix of external
+sources with varying trust levels — it's one organization's internal library, already
+organized as ten numbered top-level topic folders (`00 Inhaltsverzeichnis` …
+`10 Verschiedenes`), each with its own subfolders/categories. So "reliability of sources"
+here doesn't mean a trust tier per publisher — it means: which category a document belongs
+to, and how current it is. Citations reflect that: topic path + upload/update date, not a
+verified/unverified badge.
+
+- **Automatic ingestion — resolves Phase 2b's open "cron scheduling mechanism" decision.**
+  An in-process scheduler (APScheduler, or a plain background thread on a sleep loop
+  started from FastAPI's lifespan) polls `INGESTION_FOLDER_PATHS` every
+  `INGESTION_POLL_MINUTES` (new setting, default e.g. 10) and runs the same
+  `sync_folder` path the CLI already calls — no OS-level cron/Task Scheduler entry needed
+  on any platform. `app/ingestion/cli.py` stays as-is for anyone who still wants a manual
+  or externally-scheduled trigger.
+- **Citation provenance:** `documents` gains `source_path` (the topic/category folder path
+  relative to the watched root, e.g. `05 Finanzierung & Fundraising/Foerderantraege`) and
+  reuses existing `uploaded_at`. Pinecone chunk metadata gains the same two fields so the
+  agent has them without a DB round-trip. Citation shape grows to
+  `{document_id, filename, page, source_path, uploaded_at}`. System prompt instructs the
+  model to quote the date inline, e.g. `[filename p.N, 05 Finanzierung & Fundraising,
+  uploaded 2026-03-12]`. `CitationBadge` (frontend) renders the date alongside the
+  filename/page it already shows.
+- **Smart intake (new upload flow, distinct from the removed Phase 2b bulk upload):** a
+  small "Add document" flow back in the frontend. Author picks a PDF in the browser →
+  backend parses it (reuses Phase 2's `parser.py`, no rework) → an LLM call is given the
+  extracted text plus the *live* folder/subfolder tree (walked from
+  `INGESTION_FOLDER_PATHS` at request time, not a static config — stays correct as the
+  taxonomy evolves) → returns a suggested folder path with a short rationale → frontend
+  shows the suggestion pre-selected in a folder picker (built from that same live tree) →
+  **author confirms or picks a different existing folder before anything is saved** — the
+  suggestion is never auto-applied. On confirm, the backend writes the file to the chosen
+  path on disk (the real OneDrive-synced tree, so it joins the organized library exactly
+  like a manually-filed document) and immediately runs it through the ingestion pipeline
+  rather than waiting for the next poll.
+- **RESOLVED: new subfolders are allowed.** The LLM may propose a new category name under
+  an existing top-level topic (never a brand-new top-level topic — the ten stay fixed) when
+  nothing existing fits well; the author can also type a custom subfolder name at confirm
+  time regardless of what was suggested. The folder picker is therefore a tree select for
+  the top-level topic plus existing subfolders, with a "new folder…" text input as an
+  always-available alternative to picking one.
+
+**Exit criteria:** a PDF dropped directly into an already-organized folder is searchable
+within one poll interval with no manual command; a PDF submitted through the new intake
+flow gets a folder suggestion the author can accept or override, and only lands on disk
+after that confirmation; a chat answer citing that document quotes its upload date and
+topic folder.
 
 ---
 
@@ -271,7 +388,15 @@ Not part of MVP — SQL schema not yet defined. Revisit once a schema/source DB 
 | 2b | Document ownership: per-user vs shared corpus | **Resolved: one shared corpus** — Phase 1's per-user PDF isolation is gone |
 | 2b | OneDrive: synced local folder vs direct Graph API | **Resolved: synced local folder** — Graph API integration is open if a host has no OneDrive desktop client |
 | 2b | Deletion sync (folder → DB/vectors) | Open — not built; see Phase 2b "not built" |
-| 2b | Cron scheduling mechanism (host crontab vs docker-compose service) | Open — left to the deploy environment |
+| 2b | Cron scheduling mechanism (host crontab vs docker-compose service) | **Resolved by Phase 8: in-process scheduler**, no OS-level cron needed |
 | 2b | Shared-document delete: admin-only vs any signed-in user | Open — currently any signed-in user |
 | 3 (v2) | New SQL schema vs existing production DB | Open |
 | 7 | Target concurrent user count | Open |
+| 8 | Smart-intake placement: existing folders only vs author/LLM can create a new subfolder | **Resolved: new subfolders allowed**, new top-level topics are not |
+| 6 | Compute: ECS Fargate (original plan) vs single EC2 instance | **Resolved (v1): single EC2 instance**, `docker-compose.prod.yml` — revisit ECS if this needs to scale past one box |
+| 6 | Region | **Resolved: `eu-central-1` (Frankfurt)**, not `eu-west-1` — lower latency to the German user base |
+| 6 | Instance size | **Resolved: `t3.medium`** — identical CPU to `t3.small`, more RAM headroom for a box running Postgres+backend+frontend+Caddy together |
+| 6 | Postgres: containerized on the box vs managed RDS | **Resolved (v1): containerized, no backup job** — v2: migrate to managed RDS |
+| 6 | IaC: Terraform vs hand-provisioned | **Resolved (v1): hand-provisioned via console**, `infra/aws-runbook.md` — revisit Terraform at a second environment/instance |
+| 6 | TLS/domain | **Resolved (v1): `nip.io` stopgap**, real domain swap-in deferred until convenient |
+| 6 | Ingestion source in prod: OneDrive access model | **Resolved: `rclone bisync` on the EC2 box** (bidirectional — Phase 8's intake-confirm flow writes into the same watched folder, so a one-way mirror isn't sufficient) — blocked on Microsoft 365 tenant OAuth consent, not yet built |

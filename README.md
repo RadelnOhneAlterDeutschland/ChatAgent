@@ -6,11 +6,20 @@ chat UI on top.
 
 - `plan.md` — phased delivery plan and exit criteria.
 - `implementation.md` — technical reference: schemas, contracts, config.
+- `SECRETS.md` — every secret/config key: what it's for, whether it's required, where to
+  get it. The sourceable template of just the keys (no values) is
+  [`secrets.example.env`](secrets.example.env) at the repo root.
+- `infra/aws-runbook.md` — step-by-step console runbook for the Phase 6 prod deploy (one
+  EC2 instance), plus how `.github/workflows/ci.yml`'s `deploy` job auto-deploys `main`.
 - `.claude/skills/bdd-tdd/SKILL.md` — the development discipline this repo follows.
 
-**Status:** Phase 0–5 complete (scaffolding, auth, PDF ingestion + folder-sync pivot, agent
-orchestration, frontend). Phase 6 (AWS deployment) and Phase 7 (hardening) not started —
-see `plan.md` for what's left.
+**Status:** Phase 0–5 and Phase 8 complete (scaffolding, auth, PDF ingestion + folder-sync
+pivot, agent orchestration, frontend, smart intake + citation dates + automatic ingestion).
+**Phase 6 (AWS deployment) is in progress** — v1 is one EC2 instance via
+`infra/aws-runbook.md`, revised down from the original ECS/Terraform plan (see `plan.md`).
+Phase 7 (hardening) not started. **Phase 8's frontend pieces weren't verified with
+`tsc`/`next build`** in the pass that added them — run the commands in "Tests" below
+before relying on them.
 
 Two moving parts to run locally: the **backend** (FastAPI + Postgres, via Docker Compose)
 and the **frontend** (Next.js, via `npm` on your host — not containerized). PDFs are
@@ -18,6 +27,12 @@ ingested by dropping them into a watched folder and running a CLI command, not t
 web upload (see Phase 2b in `plan.md`). There are no local fakes wired into the running
 app — OpenAI, Pinecone, and AWS are real for any manual test run (automated tests use
 in-memory fakes instead; see "Tests" below).
+
+**All secrets and config in one place:** every value the backend needs is one key in
+[`secrets.example.env`](secrets.example.env) (repo root) — copy it to `secrets.env`, fill
+in real values, and `docker compose up` reads it automatically. `SECRETS.md` explains what
+each key does and where to get it. Both OS guides below walk through this step; this is
+just the map of where it lives.
 
 Pick the guide for your OS:
 
@@ -170,43 +185,48 @@ you ever get an error about a file "not found", check you're still in it.)
 
 ### Step 7 — Configure the backend
 
+All the passwords/API keys this app needs live in **one file**, so you only have to fill
+them in once. In PowerShell, still inside the `ChatAgent` folder:
+
 ```powershell
-copy backend\.env.example backend\.env
-notepad backend\.env
+copy secrets.example.env secrets.env
+notepad secrets.env
 ```
 
-This copies a template settings file and opens it in Notepad. It's a plain text file —
-each line is `SOME_NAME=value`. Fill in the values in this table (the file already has
-placeholder lines for each of these; replace the placeholder text after the `=`, leave the
-name before the `=` alone):
+The first line makes your own personal copy (`secrets.env`) of the template
+(`secrets.example.env`) — you edit the copy, never the template, and your copy never gets
+uploaded anywhere by this project (it's excluded from Git on purpose, since it'll hold real
+passwords). The second line opens that copy in Notepad.
 
-| Line to fill in | What to put there |
+It's a plain text file — each line looks like `SOME_NAME=`. Fill in a value after each `=`
+sign, don't touch the name before it. Here's what to type for each line — full detail
+(what each one is, exactly where to click to get it) is in **[SECRETS.md](SECRETS.md)** if
+you want it, but this covers what most people need:
+
+| Line to fill in | What to type after the `=` |
 |---|---|
-| `JWT_SECRET=` | Any long random text. To generate one: open a **second** PowerShell window (Start → PowerShell → Enter) and run `python -c "import secrets; print(secrets.token_urlsafe(48))"` — copy the printed text in. |
-| `OPENAI_API_KEY=` | Your API key from [platform.openai.com](https://platform.openai.com/api-keys) (used for chat + embeddings). |
-| `PINECONE_API_KEY=` | Your API key from your Pinecone account. |
-| `PINECONE_INDEX_NAME=` | The name of a Pinecone index you've already created (dimension `1536`, metric `cosine`). |
-| `S3_BUCKET_NAME=` | Name of an S3 bucket you've created in AWS. |
-| `AWS_REGION=` | The AWS region your bucket is in, e.g. `eu-west-1`. |
-| `INGESTION_FOLDER_PATHS=` | The folder this app watches for new PDFs — see below. |
-| `DATABASE_URL=` | Leave this one exactly as it already is — Docker fills in the real value itself. |
+| `JWT_SECRET=` | Any long random text — this app makes one up for you. Open a **second** PowerShell window (Start → type `PowerShell` → Enter) and run `python -c "import secrets; print(secrets.token_urlsafe(48))"`, then copy the text it prints into this line. |
+| `OPENAI_API_KEY=` | Your key from [platform.openai.com/api-keys](https://platform.openai.com/api-keys). |
+| `PINECONE_API_KEY=` | Your key from your Pinecone account. |
+| `PINECONE_INDEX_NAME=` | The name of a Pinecone index you've already created there (dimension `1536`, metric `cosine`). |
+| `S3_BUCKET_NAME=` | The name of an S3 bucket you've created in your AWS account. |
+| `AWS_REGION=` | The AWS region that bucket is in, e.g. `eu-west-1`. |
+| `AWS_ACCESS_KEY_ID=` and `AWS_SECRET_ACCESS_KEY=` | From your AWS account's IAM console — the simplest way to let this app talk to S3. (Skip these two only if you already have a separate `%USERPROFILE%\.aws\credentials` file set up some other way.) |
+| `INGESTION_FOLDER_PATHS=` | The folder this app watches for new PDFs — see the box below, this is the important one. |
+| `ENVIRONMENT=`, `DATABASE_URL=`, everything else | Leave blank — Docker fills these in for you. |
 
-**This `INGESTION_FOLDER_PATHS` line is where you tell the app which folder your documents
-live in** — it's the answer to "where do I put my PDFs?" from earlier. Use your OneDrive
-folder's real path, e.g. `C:\Users\you\OneDrive\ChatAgent-Inbox` (it doesn't have to be
-inside OneDrive — any folder works — but OneDrive is the common case this was built for).
-Pick a folder now, or create a new empty one for this purpose (right-click inside File
-Explorer → **New → Folder**) if you don't already have one in mind.
+**This `INGESTION_FOLDER_PATHS` line is where your documents will be picked up from** —
+it's the answer to "where do I put my PDFs?" from earlier, and you'll come back to this
+exact folder in Step 10. Use your OneDrive folder's real path, e.g.
+`C:\Users\you\OneDrive\ChatAgent-Inbox` (it doesn't have to be inside OneDrive — any folder
+works — but OneDrive is the common case this was built for). Pick a folder now, or create a
+new empty one for this purpose (right-click inside File Explorer → **New → Folder**) if you
+don't already have one in mind.
 
 To get the exact path without typing it by hand and risking a typo: open File Explorer,
 navigate to that folder, right-click it, choose **Copy as path**, then paste into Notepad
 and delete the quote marks (`"`) it adds at each end. (Multiple folders: separate them with
 a comma — Windows paths don't contain commas, so that's always safe.)
-
-Also needed but *not* in this file: AWS credentials for S3/Textract access, which come from
-a separate file at `%USERPROFILE%\.aws\credentials` (created by running `aws configure` if
-you've installed the [AWS CLI](https://aws.amazon.com/cli/), or by hand — ask whoever set
-up your AWS account if you're not sure).
 
 When done editing, press **Ctrl+S** to save, then close Notepad.
 
@@ -233,8 +253,8 @@ see an interactive API page, not an error.
 - *"port is already allocated"* (mentions `5432` or `8000`) — something else on your
   computer is already using that port. Close other apps that might use a database or web
   server, or restart your computer, then try again.
-- *Complains about a missing `.env` file* — Step 7 wasn't completed; re-run the `copy`
-  command from that step.
+- *Complains about a missing `secrets.env` file* — Step 7 wasn't completed; re-run the
+  `copy` command from that step.
 
 ### Step 9 — Start the frontend (the web page itself)
 
@@ -335,11 +355,13 @@ your PDFs are scanned, Textract OCR).
 
 ### 1. Backend
 
-```bash
-cp backend/.env.example backend/.env
-```
+All secrets/config live in one file at the repo root — copy the template to your own
+untracked copy and fill it in:
 
-Fill in `backend/.env`:
+```bash
+cp secrets.example.env secrets.env
+$EDITOR secrets.env      # or open it in any text editor
+```
 
 | Variable | Notes |
 |---|---|
@@ -347,9 +369,11 @@ Fill in `backend/.env`:
 | `OPENAI_API_KEY` | used for chat + embeddings |
 | `OPENAI_CHAT_MODEL` | optional, defaults to `gpt-4o-mini` |
 | `PINECONE_API_KEY`, `PINECONE_INDEX_NAME` | index must exist already, dim 1536 / cosine |
-| `S3_BUCKET_NAME`, `AWS_REGION` | boto3 uses your default AWS credential chain (`~/.aws/credentials`, env vars, etc.) — not set in `.env` |
+| `S3_BUCKET_NAME`, `AWS_REGION` | for the S3/Textract credentials, either fill in `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` here too, or leave those two blank and rely on `~/.aws/credentials` / another entry in boto3's default credential chain |
 | `INGESTION_FOLDER_PATHS` | comma-separated absolute path(s) to watch for PDFs, e.g. `/home/you/chatagent-inbox` |
-| `DATABASE_URL` | leave as the example value — `docker-compose.yml` overrides it to point at the `postgres` service |
+| `ENVIRONMENT`, `DATABASE_URL` | leave blank — `docker-compose.yml` sets these itself |
+
+Full explanation of every key: [SECRETS.md](SECRETS.md).
 
 Then:
 
@@ -357,12 +381,15 @@ Then:
 docker compose up --build
 ```
 
-Starts Postgres + backend on `:8000`, runs Alembic migrations on boot. Confirm with
+Starts Postgres + backend on `:8000`, runs Alembic migrations on boot (reading
+`secrets.env` via `docker-compose.yml`'s `env_file:`). Confirm with
 `open http://localhost:8000/docs` or `curl localhost:8000/health`.
 
-Without Docker:
+Without Docker: pydantic-settings reads a literal `backend/.env` (not the root
+`secrets.env`) when run this way, so copy your filled-in values there once:
 
 ```bash
+cp secrets.env backend/.env
 cd backend
 python3 -m venv .venv && .venv/bin/pip install ".[dev]"
 .venv/bin/alembic upgrade head
@@ -444,6 +471,8 @@ manually with `tsc --noEmit`, `next lint`, `next build`.
 | GET | `/documents/{id}/download` | raw PDF bytes; accepts `?token=` for citation-link navigation |
 | DELETE | `/documents/{id}` | remove doc + its Pinecone vectors (any signed-in user, not admin-gated yet) |
 | POST | `/documents/search` | similarity search spot-check surface (interim, predates the agent tool) |
+| POST | `/documents/intake/suggest` | smart intake step 1: parse an uploaded PDF, get an LLM folder suggestion, stage it (nothing written to disk yet) |
+| POST | `/documents/intake/confirm` | smart intake step 2: file the staged document at the author's chosen (or overridden) folder and ingest it |
 | POST | `/chat` | send message, run the tool-calling agent loop, returns `{session_id, message, citations}` |
 | GET | `/chat/sessions` | list past sessions |
 | GET | `/chat/sessions/{id}` | get session history (404 if not the caller's own) |
@@ -451,12 +480,25 @@ manually with `tsc --noEmit`, `next lint`, `next build`.
 ## Layout
 
 ```
+secrets.example.env     template of every secret/config key (see SECRETS.md), no values
 backend/app/api/        FastAPI routers and request dependencies
 backend/app/core/       settings, password hashing, JWT
 backend/app/db/         SQLAlchemy models, session wiring, Alembic migrations
 backend/app/agent/      tool-calling orchestrator, tools, LLM providers (Phase 4)
 backend/app/ingestion/  parse, chunk, embed, upsert, folder-sync cron (Phase 2 / 2b)
 backend/tests/          unit / integration / contract / features
-frontend/               Next.js chat UI (Phase 5)
-infra/terraform/        VPC, ECS, RDS, S3, IAM — not started yet (Phase 6)
+frontend/               Next.js chat UI (Phase 5); frontend/Dockerfile is prod-only (Phase 6)
+infra/aws-runbook.md    Phase 6 v1 console runbook: one EC2 instance, no Terraform yet
+infra/Caddyfile         reverse proxy + TLS config for the prod deploy
+infra/terraform/        original ECS/RDS/ALB plan — superseded by the v1 single-instance
+                        approach above; revisit if this needs to scale past one box
+docker-compose.prod.yml prod compose file (adds frontend + Caddy, backend `base` target)
 ```
+
+## Deploying (Phase 6)
+
+v1 is one EC2 instance, not the ECS/Terraform setup `plan.md` originally specced (see
+`plan.md`'s Phase 6 section for why). Full step-by-step: **[`infra/aws-runbook.md`](infra/aws-runbook.md)**.
+Short version: provision the instance per that runbook, then every push to `main` that
+passes CI auto-deploys via the `deploy` job in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).

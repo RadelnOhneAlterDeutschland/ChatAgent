@@ -1,0 +1,75 @@
+name: chatagent-prod
+
+# Phase 6: single-EC2-instance production deploy. Same shape as docker-compose.yml (local
+# dev) with three differences: backend runs the `base` Dockerfile target (no --reload, no
+# bind mounts), frontend and Caddy are added, and only Caddy publishes ports to the host.
+#
+# Postgres here is a container on this same box, not managed RDS — v1 deliberately, no
+# backup job wired up yet (plan.md Phase 6 decision: losing this volume loses all data).
+# v2 replaces this service with RDS; nothing else in this file changes when that happens.
+#
+# Usage on the box: `docker compose -f docker-compose.prod.yml up -d --build`
+# (see infra/aws-runbook.md for the one-time instance setup, and secrets.env values).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chatagent
+      POSTGRES_PASSWORD: chatagent
+      POSTGRES_DB: chatagent
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatagent -d chatagent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      target: base
+    env_file:
+      - ./secrets.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://chatagent:chatagent@postgres:5432/chatagent
+      ENVIRONMENT: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
+    # No `ports:` — only Caddy reaches this, over the compose network (chatagent_default).
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: /api
+    restart: unless-stopped
+    # No `ports:` — only Caddy reaches this, same as backend.
+
+  caddy:
+    image: caddy:2-alpine
+    env_file:
+      - ./secrets.env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  pgdata_prod:
+  caddy_data:
+  caddy_config:

@@ -10,6 +10,7 @@ import {
   type DocumentPublic,
 } from "@/lib/api";
 import { DocumentSidebar } from "@/components/DocumentSidebar";
+import { IntakeUpload } from "@/components/IntakeUpload";
 import { SessionList } from "@/components/SessionList";
 import { ChatPanel, type ChatMessageView } from "@/components/ChatPanel";
 
@@ -131,6 +132,7 @@ export default function ChatPage() {
   return (
     <div className="flex flex-1">
       <aside className="flex w-64 flex-col border-r border-zinc-200 dark:border-zinc-800">
+        <IntakeUpload onFiled={refreshDocuments} />
         <DocumentSidebar documents={documents} onDelete={handleDeleteDocument} />
         <SessionList
           sessions={sessions}

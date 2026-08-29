@@ -13,6 +13,7 @@ from fastapi import Depends
 from app.core.config import get_settings
 from app.ingestion.blob_store import S3BlobStore
 from app.ingestion.embedder import OpenAIEmbedder
+from app.ingestion.intake import IntakeStagingStore
 from app.ingestion.ocr import TextractOcrService
 from app.ingestion.pipeline import IngestionPipeline
 from app.ingestion.ports import BlobStore, Embedder, OcrService, VectorStore
@@ -55,3 +56,24 @@ def get_pipeline(
 
 
 PipelineDep = Annotated[IngestionPipeline, Depends(get_pipeline)]
+
+
+def get_ingestion_folder_paths() -> list[str]:
+    """Overridden in tests (`app.dependency_overrides`) so a scenario can point it at its
+    own `tmp_path` without touching real settings/env — plan.md Phase 8."""
+    raw = get_settings().ingestion_folder_paths
+    return [path.strip() for path in raw.split(",") if path.strip()]
+
+
+FolderPathsDep = Annotated[list[str], Depends(get_ingestion_folder_paths)]
+
+
+@lru_cache
+def get_intake_store() -> IntakeStagingStore:
+    """One process-wide staging area for documents awaiting a placement decision — see
+    `IntakeStagingStore`'s docstring for why in-memory is an accepted simplification
+    here."""
+    return IntakeStagingStore()
+
+
+IntakeStoreDep = Annotated[IntakeStagingStore, Depends(get_intake_store)]

@@ -22,7 +22,7 @@ services:
       context: ./backend
       target: dev
     env_file:
-      - ./backend/.env
+      - ./secrets.env
     environment:
       DATABASE_URL: postgresql+psycopg://chatagent:chatagent@postgres:5432/chatagent
       ENVIRONMENT: local

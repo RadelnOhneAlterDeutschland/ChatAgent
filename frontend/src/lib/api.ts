@@ -77,6 +77,27 @@ export interface Citation {
   document_id: string;
   filename: string;
   page: number;
+  // Phase 8: which topic/category folder the document lives in and when it was
+  // uploaded/last updated — `null` for anything ingested before that field existed, or
+  // filed outside every configured watch folder.
+  uploaded_at?: string | null;
+  topic_path?: string | null;
+}
+
+// Phase 8: smart intake — a live snapshot of the folder taxonomy, used both to show the
+// suggested placement and to let the author pick a different one.
+export interface TopicFolder {
+  name: string;
+  subfolders: string[];
+}
+
+export interface IntakeSuggestion {
+  intake_id: string;
+  filename: string;
+  suggested_topic: string;
+  suggested_subfolder: string | null;
+  rationale: string;
+  topics: TopicFolder[];
 }
 
 export interface ChatResponse {
@@ -123,6 +144,40 @@ export const api = {
 
   deleteDocument: (token: string, id: string) =>
     request<void>(`/documents/${id}`, { method: "DELETE" }, token),
+
+  // Phase 8: smart intake, step 1 of 2 — parses the file and asks the LLM where it
+  // belongs. Nothing is written to disk yet; `confirmIntake` is what actually files it.
+  suggestIntake: (token: string, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<IntakeSuggestion>(
+      "/documents/intake/suggest",
+      { method: "POST", body },
+      token,
+    );
+  },
+
+  // Step 2 of 2 — `topic`/`subfolder` are whatever the author ended up choosing, which
+  // may or may not match the suggestion (an existing folder, or a brand-new subfolder
+  // name under an existing topic).
+  confirmIntake: (
+    token: string,
+    intakeId: string,
+    topic: string,
+    subfolder: string | null,
+  ) =>
+    request<DocumentPublic>(
+      "/documents/intake/confirm",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          intake_id: intakeId,
+          topic,
+          subfolder,
+        }),
+      },
+      token,
+    ),
 
   // Opened as a plain browser navigation (new tab), so the token travels as a query
   // param rather than an Authorization header. KNOWN SIMPLIFICATION (plan.md Phase 5

@@ -139,6 +139,21 @@ class TestHappyPath:
 
         assert max(embedder.batch_sizes) <= 2
 
+    def test_search_results_carry_the_upload_date_and_source_path_for_citations(
+        self, pipeline, db_session, stored_document, owner
+    ):
+        """plan.md Phase 8: citation provenance — `pdf_search` derives its date/topic from
+        these two fields rather than `pipeline.search` computing them itself."""
+        document = stored_document([TEXT_PAGE])
+        document.source_path = "/watched/05 Finanzierung/report.pdf"
+        db_session.commit()
+        pipeline.ingest(db_session, document.id)
+
+        results = pipeline.search(db_session, owner.id, "quarterly revenue")
+
+        assert results[0]["source_path"] == "/watched/05 Finanzierung/report.pdf"
+        assert results[0]["uploaded_at"] == document.uploaded_at.isoformat()
+
     def test_an_ingested_document_can_be_retrieved_by_its_own_words(
         self, pipeline, db_session, stored_document, vector_store, embedder, owner
     ):

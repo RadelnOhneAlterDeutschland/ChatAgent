@@ -8,6 +8,8 @@ import uuid
 
 from app.agent.providers.base import ToolSpec
 from app.agent.tool import Tool
+from app.core.config import get_settings
+from app.ingestion.topic_path import topic_path_for
 
 PDF_SEARCH_SPEC = ToolSpec(
     name="pdf_search",
@@ -33,11 +35,17 @@ PDF_SEARCH_SPEC = ToolSpec(
 def make_pdf_search_tool(pipeline, db, owner_id: uuid.UUID) -> Tool:
     """`pipeline`/`db`/`owner_id` are bound per-request (implementation.md §7) — the tool
     itself only ever sees the model's `query`/`top_k` arguments."""
+    folder_paths = [
+        path.strip() for path in get_settings().ingestion_folder_paths.split(",") if path.strip()
+    ]
 
     def execute(arguments: dict) -> dict:
         query = arguments["query"]
         top_k = arguments.get("top_k", 5)
         matches = pipeline.search(db, owner_id, query, top_k=top_k)
+
+        for match in matches:
+            match["topic_path"] = topic_path_for(match.get("source_path"), folder_paths)
 
         citations = []
         for match in matches:
@@ -45,6 +53,8 @@ def make_pdf_search_tool(pipeline, db, owner_id: uuid.UUID) -> Tool:
                 "document_id": match["document_id"],
                 "filename": match["filename"],
                 "page": match["page"],
+                "uploaded_at": match.get("uploaded_at"),
+                "topic_path": match.get("topic_path"),
             }
             if citation not in citations:
                 citations.append(citation)

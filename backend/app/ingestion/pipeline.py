@@ -175,11 +175,23 @@ class IngestionPipeline:
                 )
             ).scalars()
         }
+        # Fetched alongside the chunk rows so a citation can quote when a document was
+        # ingested and where it lives, without another round-trip per result
+        # (plan.md Phase 8).
+        document_ids = {row.document_id for row in rows_by_id.values()}
+        documents_by_id = {
+            document.id: document
+            for document in db.execute(
+                select(Document).where(Document.id.in_(document_ids))
+            ).scalars()
+        }
+
         results = []
         for match in matches:
             row = rows_by_id.get(match.id)
             if row is None:
                 continue
+            document = documents_by_id.get(row.document_id)
             results.append(
                 {
                     "document_id": match.metadata.get("document_id"),
@@ -187,6 +199,8 @@ class IngestionPipeline:
                     "page": match.metadata.get("page"),
                     "text": row.text,
                     "score": match.score,
+                    "uploaded_at": document.uploaded_at.isoformat() if document else None,
+                    "source_path": document.source_path if document else None,
                 }
             )
         return results

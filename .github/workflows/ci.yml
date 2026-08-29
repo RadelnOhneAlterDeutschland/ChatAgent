@@ -53,10 +53,63 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Build only — pushing to ECR and deploying ECS lands in Phase 6.
+      # Build-only check that the prod image (base target, no --reload) still builds.
+      # The deploy job below rebuilds for real, directly on the box — no registry
+      # involved yet (plan.md Phase 6: single EC2 instance, not ECS/ECR).
       - uses: docker/build-push-action@v6
         with:
           context: ./backend
+          target: base
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Phase 6: deploys straight to the one EC2 instance over SSH — `git pull` +
+  # `docker compose -f docker-compose.prod.yml up -d --build` runs on the box itself, so
+  # there's no image registry (ECR/GHCR) in this pass. Revisit once there's more than one
+  # instance to roll out to.
+  #
+  # Required repo secrets (see infra/aws-runbook.md's last step for how to create these):
+  #   DEPLOY_HOST     - the box's Elastic IP or nip.io/domain hostname
+  #   DEPLOY_USER      - the SSH login user on the box (e.g. `ubuntu`)
+  #   DEPLOY_SSH_KEY   - private half of a key pair added ONLY for CI (not your personal
+  #                      key, not the box's own GitHub deploy key — three separate keys,
+  #                      see the runbook)
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, build-image]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    steps:
+      - name: Add box to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Load CI deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Pull latest + rebuild on the box
+        run: |
+          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
+            set -e
+            cd ~/ChatAgent
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose -f docker-compose.prod.yml up -d --build
+          '
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsSk "https://${{ secrets.DEPLOY_HOST }}/api/health" \
+               || curl -fsS "http://${{ secrets.DEPLOY_HOST }}/api/health"; then
+              echo "Healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Health check failed after deploy"
+          exit 1

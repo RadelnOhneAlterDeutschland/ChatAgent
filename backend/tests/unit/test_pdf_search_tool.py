@@ -67,7 +67,51 @@ def test_a_citation_is_derived_from_each_match() -> None:
 
     result = tool.execute({"query": "x"})
 
-    assert result["citations"] == [{"document_id": "d1", "filename": "revenue.pdf", "page": 1}]
+    assert result["citations"] == [
+        {
+            "document_id": "d1",
+            "filename": "revenue.pdf",
+            "page": 1,
+            "uploaded_at": None,
+            "topic_path": None,
+        }
+    ]
+
+
+def test_a_citation_carries_the_upload_date_and_topic_when_the_match_has_them(
+    monkeypatch,
+) -> None:
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("INGESTION_FOLDER_PATHS", "/watched")
+    get_settings.cache_clear()
+    try:
+        matches = [
+            {
+                "document_id": "d1",
+                "filename": "grant.pdf",
+                "page": 1,
+                "text": "...",
+                "score": 0.9,
+                "uploaded_at": "2026-03-12T10:00:00+00:00",
+                "source_path": "/watched/05 Finanzierung/grant.pdf",
+            }
+        ]
+        tool = make_pdf_search_tool(StubPipeline(matches), db=None, owner_id=uuid.uuid4())
+
+        result = tool.execute({"query": "x"})
+
+        assert result["citations"] == [
+            {
+                "document_id": "d1",
+                "filename": "grant.pdf",
+                "page": 1,
+                "uploaded_at": "2026-03-12T10:00:00+00:00",
+                "topic_path": "05 Finanzierung",
+            }
+        ]
+    finally:
+        get_settings.cache_clear()
 
 
 def test_no_matches_means_no_citations() -> None:
@@ -88,4 +132,12 @@ def test_duplicate_pages_from_different_matches_produce_one_citation() -> None:
 
     result = tool.execute({"query": "x"})
 
-    assert result["citations"] == [{"document_id": "d1", "filename": "revenue.pdf", "page": 1}]
+    assert result["citations"] == [
+        {
+            "document_id": "d1",
+            "filename": "revenue.pdf",
+            "page": 1,
+            "uploaded_at": None,
+            "topic_path": None,
+        }
+    ]

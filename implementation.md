@@ -78,6 +78,11 @@ backend/
       system_owner.py                 # ensure_system_user: the one shared-corpus owner (Phase 2b)
       folder_watcher.py                # discover_pdfs / sync_folder: cron ingestion trigger (Phase 2b)
       cli.py                            # `python -m app.ingestion.cli` — what cron actually calls
+      scheduler.py                      # poll_forever / IngestionScheduler: auto-ingestion (Phase 8)
+      topic_path.py                      # topic_path_for: citation provenance from source_path (Phase 8)
+      topic_tree.py                       # discover_topic_tree: live folder taxonomy (Phase 8)
+      intake.py                            # IntakeStagingStore / write_confirmed_intake (Phase 8)
+      intake_classifier.py                  # suggest_placement: LLM folder suggestion (Phase 8)
     db/
       models.py              # SQLAlchemy models
       migrations/             # Alembic
@@ -96,6 +101,7 @@ frontend/                 # Next.js 16 (App Router, Turbopack), TypeScript, Tail
     components/
       AuthForm.tsx
       DocumentSidebar.tsx
+      IntakeUpload.tsx          # smart intake: file picker -> suggestion -> confirm (Phase 8)
       SessionList.tsx
       ChatPanel.tsx
       MessageBubble.tsx
@@ -189,7 +195,11 @@ All tools exposed to the agent via OpenAI function-calling schema. Each returns 
 
 ### `pdf_search(query: str, top_k: int = 5) -> list[Chunk]`
 - Embed `query`, similarity search Pinecone (filtered by `owner_id` namespace).
-- Return `[{document_id, filename, page, text, score}]`.
+- Return `[{document_id, filename, page, text, score, uploaded_at, source_path, topic_path}]`
+  — the last three added in Phase 8: `uploaded_at`/`source_path` come straight from the
+  `Document` row (`IngestionPipeline.search`, no Pinecone metadata change needed since
+  Phase 2b already had `source_path`); `topic_path` is derived from `source_path` by the
+  tool itself (`app/ingestion/topic_path.py::topic_path_for`), not by the pipeline.
 - **Implemented in Phase 2 as `IngestionPipeline.search`** (`app/ingestion/pipeline.py`),
   ahead of the Phase 4 agent tool that will wrap it. Reachable now over HTTP via
   `POST /documents/search` — see §8.
@@ -228,12 +238,14 @@ All tools exposed to the agent via OpenAI function-calling schema. Each returns 
   `"citations"` key — a list of `{document_id/table, filename/…, page/…}`-shaped dicts.
   The orchestrator collects and dedupes these across every tool call in the run onto the
   final `AgentResult.citations`, independent of whether the model cited inline in prose.
-  `pdf_search` derives one citation per unique `(document_id, page)` from its matches;
+  `pdf_search` derives one citation per unique `(document_id, page)` from its matches, now
+  also carrying `uploaded_at`/`topic_path` (Phase 8, `null` when either is unknown);
   future tools (`sql_query`, `flatfile_query`) follow the same convention rather than
   inventing their own shape.
 - System prompt instructs the model to prefer tool lookups over prior knowledge, cite
-  `[filename p.N]` inline, and — per §11 — treat retrieved tool content as untrusted data,
-  never as instructions to follow.
+  `[filename p.N]` inline — extended to `[filename p.N, topic_path, uploaded YYYY-MM-DD]`
+  when a result carries those fields (Phase 8) — and, per §11, treat retrieved tool
+  content as untrusted data, never as instructions to follow.
 
 ## 8. API endpoints
 
@@ -246,6 +258,8 @@ All tools exposed to the agent via OpenAI function-calling schema. Each returns 
 | GET | `/documents/{id}/download` | raw PDF bytes, for a citation link (Phase 5, not in the original table). Auth via Bearer header or `?token=` — see §11 and §12 |
 | DELETE | `/documents/{id}` | remove doc + its Pinecone vectors |
 | POST | `/documents/search` | similarity search over the caller's own documents (Phase 2 interim surface for `pdf_search`; not in the original table) |
+| POST | `/documents/intake/suggest` | smart intake step 1 (Phase 8): parse an uploaded PDF, ask the LLM for a placement suggestion against the live folder tree, stage it — nothing written to disk yet |
+| POST | `/documents/intake/confirm` | smart intake step 2: write the staged file to the author's chosen (or overridden) topic/subfolder and ingest it immediately |
 | POST | `/chat` | send message, run agent loop, return `{session_id, message, citations}` as JSON — **RESOLVED: not SSE**, see §7 |
 | GET | `/chat/sessions` | list past sessions |
 | GET | `/chat/sessions/{id}` | get session history (404 if not the caller's own) |
@@ -263,19 +277,38 @@ S3_BUCKET_NAME
 AWS_REGION
 JWT_SECRET
 JWT_EXPIRY_MINUTES
+INGESTION_FOLDER_PATHS    # comma-separated watched folder(s), Phase 2b
+INGESTION_POLL_MINUTES    # default 10 — auto-ingestion poll interval, Phase 8
+SYSTEM_OWNER_EMAIL        # default shared-library@system.local, Phase 2b
 ```
 
 Local: `.env` file, loaded via `pydantic-settings`. Prod: AWS Secrets Manager, injected as ECS task environment variables.
 
 ## 10. Deployment (AWS)
 
-- **Compute:** ECS Fargate, backend container behind ALB. Start small per task (~0.5 vCPU / 1GB, roughly `t3.medium`-equivalent) — backend is I/O-bound (waiting on OpenAI/Pinecone calls), not CPU-bound, so a task this size comfortably handles ~50-150 concurrent chat sessions before the real ceiling (OpenAI rate-limit tier, not local compute) is hit. Autoscale task count on CPU/request count rather than sizing one large fixed instance.
-- **DB:** RDS Postgres, single instance for v1 (Multi-AZ later if uptime requires).
-- **Storage:** S3 bucket, versioning on, lifecycle rule optional for old doc cleanup.
-- **Vector DB:** Pinecone (external SaaS, not AWS-hosted).
-- **Secrets:** AWS Secrets Manager, referenced by ECS task definition.
-- **CI/CD:** GitHub Actions — on push to `main`: run tests → build Docker image → push ECR → update ECS service.
-- **IaC:** Terraform (or CDK) covering VPC, ECS, RDS, S3, IAM roles, ALB, Secrets Manager entries — kept in `infra/`.
+**Original plan (below), revised for v1 — see `plan.md` Phase 6 for the full rationale.**
+The ECS/ALB/RDS/Terraform architecture described in this section is still the intended
+answer if this needs to scale past one box; what's actually being built for v1 is
+simpler, documented step by step in `infra/aws-runbook.md`:
+
+- **Compute:** one EC2 instance (`t3.medium`, `eu-central-1`), not ECS/Fargate/ALB —
+  `docker-compose.prod.yml` runs Postgres, backend, frontend, and Caddy (reverse proxy +
+  automatic TLS) on it directly. No autoscaling in v1.
+- **DB:** Postgres containerized on the same instance, not RDS — **no backup job in v1**
+  (an instance/volume loss loses all data, an accepted v1 tradeoff). v2: migrate to
+  managed RDS.
+- **Storage:** S3 bucket — unchanged from the original plan.
+- **Vector DB:** Pinecone (external SaaS) — unchanged.
+- **Secrets:** `secrets.env` on the instance (same file/format as local dev), not Secrets
+  Manager — AWS credentials specifically come from an **EC2 instance role** instead of a
+  static key pair, so nothing long-lived sits in that file for S3/Textract access.
+- **CI/CD:** GitHub Actions (`.github/workflows/ci.yml`'s `deploy` job) — on push to
+  `main`, after lint/test/build-check pass: SSH into the instance, `git pull`, `docker
+  compose -f docker-compose.prod.yml up -d --build` directly on the box. No image
+  registry (ECR/GHCR) in v1 — only one instance to roll out to.
+- **IaC:** none written for v1 — `infra/terraform/` stays empty; the instance, security
+  group, Elastic IP, and IAM role are hand-provisioned once via the console
+  (`infra/aws-runbook.md`). Revisit Terraform once there's a second environment/instance.
 
 ## 11. Security notes
 
@@ -356,6 +389,14 @@ backend/tests/
   Playwright e2e coverage of the login → upload → ask → cited-answer journey). Verified
   manually instead: `tsc --noEmit`, `next lint`, `next build`, and a dev-server render
   check of `/login`, `/signup`, `/chat`.
+- Phase 8 status: 225 backend tests, 90% statement coverage of `app/` — same shape of gap
+  as every earlier phase (real adapters + `cli.py`, exercised only by
+  `@pytest.mark.integration`), plus the new `IngestionScheduler`'s one genuinely
+  timing-dependent test (`test_a_second_tick_runs_after_the_interval_elapses`), marked
+  `@pytest.mark.integration` for the same reason. `IntakeUpload.tsx` and the
+  `CitationBadge.tsx` date/topic rendering were **not** verified by `tsc`/`next build` this
+  pass — no Node runtime in the environment this was built in; run the frontend "Tests"
+  commands from the README before trusting it.
 
 ## 14. Open items (see `plan.md` decision table)
 
