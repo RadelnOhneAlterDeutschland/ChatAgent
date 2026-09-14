@@ -28,6 +28,15 @@ class IntakeClassificationError(Exception):
     topic that doesn't exist."""
 
 
+def _strip_code_fence(content: str) -> str:
+    """Some models wrap JSON in a ```json ... ``` fence despite being told not to
+    (observed via OpenRouter-routed models in particular). Strip it if present."""
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return text
+
+
 def suggest_placement(provider: LLMProvider, topics: list[TopicFolder], excerpt: str) -> dict:
     if not topics:
         raise IntakeClassificationError("no topic folders are configured to file into")
@@ -49,7 +58,7 @@ def suggest_placement(provider: LLMProvider, topics: list[TopicFolder], excerpt:
     )
 
     try:
-        parsed = json.loads(turn.content or "")
+        parsed = json.loads(_strip_code_fence(turn.content or ""))
         topic = parsed["topic"]
         subfolder = parsed.get("subfolder") or None
         rationale = parsed.get("rationale", "")
