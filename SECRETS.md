@@ -28,6 +28,7 @@ automatically (`docker-compose.yml`'s `env_file:` points at `secrets.env`).
 |---|---|---|---|
 | `OPENAI_API_KEY` | **Yes** | Powers chat answers and document embeddings. | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) — create a key on an account with billing enabled. |
 | `OPENAI_CHAT_MODEL` | No (default `gpt-4o-mini`) | Which OpenAI chat model answers questions. | Any valid OpenAI chat-completions model name, if you want to override the default. |
+| `OPENAI_BASE_URL` | No (default: real OpenAI) | Chat only — repoints chat completions at any OpenAI-compatible endpoint. | e.g. `https://openrouter.ai/api/v1` for OpenRouter — pair with an OpenRouter key in `OPENAI_API_KEY` and a real OpenRouter model id (e.g. `openai/gpt-4o-mini`) in `OPENAI_CHAT_MODEL`. Embeddings (`app/ingestion/embedder.py`) always hit real OpenAI regardless of this — OpenRouter doesn't proxy an embeddings endpoint, so ingestion needs a genuine OpenAI key even when chat is on OpenRouter. |
 
 ## Pinecone
 

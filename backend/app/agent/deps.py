@@ -19,7 +19,11 @@ from app.core.config import get_settings
 @lru_cache
 def get_llm_provider() -> LLMProvider:
     settings = get_settings()
-    return OpenAIProvider(api_key=settings.openai_api_key, model=settings.openai_chat_model)
+    return OpenAIProvider(
+        api_key=settings.openai_api_key,
+        model=settings.openai_chat_model,
+        base_url=settings.openai_base_url,
+    )
 
 
 LLMProviderDep = Annotated[LLMProvider, Depends(get_llm_provider)]

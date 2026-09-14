@@ -25,3 +25,6 @@ out/
 .DS_Store
 .idea/
 *.swp
+
+# Local-dev PDF ingestion inbox (README.md "Setup on macOS / Linux" > 3. Ingest a PDF)
+/chatagent-inbox/

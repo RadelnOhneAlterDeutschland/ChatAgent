@@ -31,6 +31,7 @@ services:
     volumes:
       - ./backend/app:/srv/app
       - ./backend/tests:/srv/tests
+      - ./chatagent-inbox:/data/chatagent-inbox
     depends_on:
       postgres:
         condition: service_healthy

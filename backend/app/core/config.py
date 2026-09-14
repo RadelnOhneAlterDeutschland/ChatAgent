@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # External services. Not used until Phase 2+, but fail fast at boot if absent.
     openai_api_key: str = Field(alias="OPENAI_API_KEY")
     openai_chat_model: str = Field(default="gpt-4o-mini", alias="OPENAI_CHAT_MODEL")
+    # Chat only (see agent/providers/openai_provider.py) — e.g. https://openrouter.ai/api/v1
+    # to swap chat completions to OpenRouter. Leave unset for real OpenAI. Embeddings
+    # (app/ingestion/embedder.py) always hit OpenAI directly; OpenRouter has no embeddings
+    # endpoint to point at.
+    openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
     pinecone_api_key: str = Field(alias="PINECONE_API_KEY")
     pinecone_index_name: str = Field(alias="PINECONE_INDEX_NAME")
     s3_bucket_name: str = Field(alias="S3_BUCKET_NAME")

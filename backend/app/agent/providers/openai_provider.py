@@ -15,8 +15,13 @@ DEFAULT_MODEL = "gpt-4o-mini"
 
 
 class OpenAIProvider:
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL) -> None:
-        self._client = OpenAI(api_key=api_key)
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, base_url: str | None = None) -> None:
+        # base_url lets this point at any OpenAI-compatible chat/completions endpoint
+        # (e.g. OpenRouter) without touching the request/response shapes below — OpenRouter
+        # mirrors OpenAI's chat completions API. Embeddings are NOT OpenAI-compatible on
+        # OpenRouter (it doesn't proxy an embeddings endpoint), so `embedder.py` deliberately
+        # never takes this override — ingestion still needs a real OpenAI key regardless.
+        self._client = OpenAI(api_key=api_key, base_url=base_url)
         self._model = model
 
     def chat(self, messages: list[Message], tools: list[ToolSpec]) -> AgentTurn:

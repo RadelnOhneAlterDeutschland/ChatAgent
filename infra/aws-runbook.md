@@ -62,7 +62,7 @@ already uses) picks up automatically — no code change, no key to leak.
    created it yet, come back and fill this in after. Name the policy
    `chatagent-backend-policy`, create it.
 2. IAM → **Roles** → **Create role** → trusted entity type **AWS service** → use case
-   **EC2** → attach the policy you just made → name it `chatagent-ec2-role` → create.
+   **EC2** → attach the policy you just made → name it ` e` → create.
 
 ## Step 2 — Create the S3 bucket
 
