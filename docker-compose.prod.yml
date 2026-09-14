@@ -36,6 +36,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://chatagent:chatagent@postgres:5432/chatagent
       ENVIRONMENT: production
+    volumes:
+      # PDF ingestion watch folder (see INGESTION_FOLDER_PATHS in secrets.env) — must be
+      # bind-mounted here or the container sees an empty/missing path regardless of what's
+      # actually on the host at ~ubuntu/chatagent-inbox.
+      - /home/ubuntu/chatagent-inbox:/data/chatagent-inbox
     depends_on:
       postgres:
         condition: service_healthy
