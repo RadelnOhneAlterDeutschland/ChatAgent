@@ -48,6 +48,10 @@ export function IntakeUpload({ onFiled }: IntakeUploadProps) {
       setTopic(result.suggested_topic);
       setSubfolderChoice(result.suggested_subfolder ?? NO_SUBFOLDER_OPTION);
     } catch (err) {
+      // Clear any previous (now possibly stale) suggestion — otherwise its "Confirm
+      // placement" button stays wired to an intake_id this failed retry didn't renew,
+      // and confirming it 404s with "No pending document with that id".
+      setSuggestion(null);
       setError(err instanceof ApiError ? err.message : "Could not suggest a placement.");
     } finally {
       setBusy(false);
