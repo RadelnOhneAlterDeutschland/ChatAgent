@@ -6,7 +6,7 @@ real tool (pdf_search, and later sql_query/flatfile_query) would do.
 
 import pytest
 
-from app.agent.orchestrator import AgentOrchestrator
+from app.agent.orchestrator import SYSTEM_PROMPT, AgentOrchestrator
 from app.agent.providers.base import AgentTurn, Message, ToolCall, ToolSpec
 from app.agent.tool import Tool
 from tests.fakes.llm_provider import FakeLLMProvider
@@ -240,6 +240,26 @@ class TestSystemPrompt:
 
         sent = provider.received_messages[0]
         assert [message.role for message in sent].count("system") == 1
+
+
+class TestSystemPromptGuardrails:
+    """The prompt text itself is what's under test here, not model behaviour — whether the
+    model actually obeys it needs a live LLM (`@pytest.mark.integration`), out of scope for
+    this scripted-fake suite. This just proves the guardrail instructions are present."""
+
+    def test_instructs_declining_questions_unrelated_to_the_documents(self) -> None:
+        prompt = SYSTEM_PROMPT.lower()
+        assert "off-topic" in prompt or "unrelated" in prompt
+
+    def test_forbids_falling_back_on_general_knowledge_for_such_questions(self) -> None:
+        prompt = SYSTEM_PROMPT.lower()
+        assert "general knowledge" in prompt or "world knowledge" in prompt
+
+    def test_instructs_redirecting_to_what_it_can_help_with(self) -> None:
+        prompt = SYSTEM_PROMPT.lower()
+        assert (
+            "redirect" in prompt or "what you can help with" in prompt or "can help with" in prompt
+        )
 
 
 class TestToolSchemaPassthrough:

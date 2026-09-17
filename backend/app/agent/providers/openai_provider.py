@@ -15,7 +15,9 @@ DEFAULT_MODEL = "gpt-4o-mini"
 
 
 class OpenAIProvider:
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, base_url: str | None = None) -> None:
+    def __init__(
+        self, api_key: str, model: str = DEFAULT_MODEL, base_url: str | None = None
+    ) -> None:
         # base_url lets this point at any OpenAI-compatible chat/completions endpoint
         # (e.g. OpenRouter) without touching the request/response shapes below — OpenRouter
         # mirrors OpenAI's chat completions API. Embeddings are NOT OpenAI-compatible on
